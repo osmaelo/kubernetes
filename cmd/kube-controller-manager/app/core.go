@@ -30,7 +30,6 @@ import (
 	"k8s.io/klog/v2"
 
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/quota/v1/generic"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -92,6 +91,12 @@ func newServiceLBControllerDescriptor() *ControllerDescriptor {
 }
 
 func startServiceLBController(ctx context.Context, controllerContext ControllerContext, controllerName string) (controller.Interface, bool, error) {
+	logger := klog.FromContext(ctx)
+	if controllerContext.Cloud == nil {
+		logger.Info("Warning: service-controller is set, but no cloud provider specified. Will not configure service controller.")
+		return nil, false, nil
+	}
+
 	serviceController, err := servicecontroller.New(
 		controllerContext.Cloud,
 		controllerContext.ClientBuilder.ClientOrDie("service-controller"),
@@ -102,7 +107,7 @@ func startServiceLBController(ctx context.Context, controllerContext ControllerC
 	)
 	if err != nil {
 		// This error shouldn't fail. It lives like this as a legacy.
-		klog.FromContext(ctx).Error(err, "Failed to start service controller")
+		logger.Error(err, "Failed to start service controller.")
 		return nil, false, nil
 	}
 	go serviceController.Run(ctx, int(controllerContext.ComponentConfig.ServiceController.ConcurrentServiceSyncs), controllerContext.ControllerManagerMetrics)
@@ -261,6 +266,11 @@ func newCloudNodeLifecycleControllerDescriptor() *ControllerDescriptor {
 
 func startCloudNodeLifecycleController(ctx context.Context, controllerContext ControllerContext, controllerName string) (controller.Interface, bool, error) {
 	logger := klog.FromContext(ctx)
+	if controllerContext.Cloud == nil {
+		logger.Info("Warning: node-controller is set, but no cloud provider specified. Will not configure node lifecyle controller.")
+		return nil, false, nil
+	}
+
 	cloudNodeLifecycleController, err := cloudnodelifecyclecontroller.NewCloudNodeLifecycleController(
 		controllerContext.InformerFactory.Core().V1().Nodes(),
 		// cloud node lifecycle controller uses existing cluster role from node-controller
@@ -467,7 +477,6 @@ func startResourceClaimController(ctx context.Context, controllerContext Control
 		klog.FromContext(ctx),
 		controllerContext.ClientBuilder.ClientOrDie("resource-claim-controller"),
 		controllerContext.InformerFactory.Core().V1().Pods(),
-		controllerContext.InformerFactory.Resource().V1alpha3().PodSchedulingContexts(),
 		controllerContext.InformerFactory.Resource().V1alpha3().ResourceClaims(),
 		controllerContext.InformerFactory.Resource().V1alpha3().ResourceClaimTemplates())
 	if err != nil {
@@ -678,11 +687,6 @@ func startGarbageCollectorController(ctx context.Context, controllerContext Cont
 	metadataClient, err := metadata.NewForConfig(config)
 	if err != nil {
 		return nil, true, err
-	}
-
-	ignoredResources := make(map[schema.GroupResource]struct{})
-	for _, r := range controllerContext.ComponentConfig.GarbageCollectorController.GCIgnoredResources {
-		ignoredResources[schema.GroupResource{Group: r.Group, Resource: r.Resource}] = struct{}{}
 	}
 
 	garbageCollector, err := garbagecollector.NewComposedGarbageCollector(
